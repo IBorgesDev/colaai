@@ -4,9 +4,10 @@ import { prisma } from '@/lib/prisma'
 // DELETE /api/inscriptions/[id] - Cancel inscription
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  context: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { id } = await context.params
     const { searchParams } = new URL(request.url)
     const userId = searchParams.get('userId')
 
@@ -19,7 +20,7 @@ export async function DELETE(
 
     // Check if inscription exists
     const inscription = await prisma.inscription.findUnique({
-      where: { id: params.id },
+      where: { id },
       include: {
         event: true
       }
@@ -59,7 +60,7 @@ export async function DELETE(
 
     // Update inscription status to cancelled
     const cancelledInscription = await prisma.inscription.update({
-      where: { id: params.id },
+      where: { id },
       data: {
         status: 'CANCELLED'
       },

@@ -4,11 +4,12 @@ import { prisma } from '@/lib/prisma'
 // GET /api/events/[id] - Get event by ID
 export async function GET(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  context: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { id } = await context.params
     const event = await prisma.event.findUnique({
-      where: { id: params.id },
+      where: { id },
       include: {
         category: true,
         organizer: {
@@ -77,9 +78,10 @@ export async function GET(
 // PUT /api/events/[id] - Update event
 export async function PUT(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  context: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { id } = await context.params
     const body = await request.json()
     
     const {
@@ -101,7 +103,7 @@ export async function PUT(
 
     // Check if event exists
     const existingEvent = await prisma.event.findUnique({
-      where: { id: params.id },
+      where: { id },
       include: {
         inscriptions: {
           where: {
@@ -178,7 +180,7 @@ export async function PUT(
     if (categoryId) updateData.categoryId = categoryId
 
     const updatedEvent = await prisma.event.update({
-      where: { id: params.id },
+      where: { id },
       data: updateData,
       include: {
         category: true,
@@ -214,15 +216,16 @@ export async function PUT(
 // DELETE /api/events/[id] - Delete event
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  context: { params: Promise<{ id: string }> }
 ) {
   try {
+    const { id } = await context.params
     const { searchParams } = new URL(request.url)
     const organizerId = searchParams.get('organizerId')
 
     // Check if event exists
     const existingEvent = await prisma.event.findUnique({
-      where: { id: params.id },
+      where: { id },
       include: {
         inscriptions: {
           where: {
@@ -256,7 +259,7 @@ export async function DELETE(
     }
 
     await prisma.event.delete({
-      where: { id: params.id }
+      where: { id }
     })
 
     return NextResponse.json({ message: 'Event deleted successfully' })
