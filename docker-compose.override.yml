@@ -1,0 +1,34 @@
+# Docker Compose override for development
+# This file is automatically merged with docker-compose.yml in development
+
+version: '3.8'
+
+services:
+  app:
+    # Override for development with hot reload
+    environment:
+      - NODE_ENV=development
+      - CHOKIDAR_USEPOLLING=true
+      - WATCHPACK_POLLING=true
+    volumes:
+      # Mount source code for hot reload
+      - .:/app
+      - /app/node_modules
+      - /app/.next
+    # Restart policy for development
+    restart: unless-stopped
+    # Development command with hot reload
+    command: npm run dev
+
+  postgres:
+    # Development environment variables
+    environment:
+      - POSTGRES_DB=eventplatform
+      - POSTGRES_USER=eventplatform
+      - POSTGRES_PASSWORD=eventplatform_password
+    # Mount for easier database management in development
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+      # Optional: mount for easy backup/restore
+      - ./backups:/backups 

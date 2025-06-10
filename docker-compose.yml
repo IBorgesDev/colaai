@@ -1,0 +1,119 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: eventplatform_postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: eventplatform
+      POSTGRES_USER: eventplatform
+      POSTGRES_PASSWORD: eventplatform_password
+      POSTGRES_HOST_AUTH_METHOD: trust
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    networks:
+      - eventplatform-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U eventplatform -d eventplatform"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Next.js Application
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: development
+    container_name: eventplatform_app
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=development
+      - DATABASE_URL=postgresql://eventplatform:eventplatform_password@postgres:5432/eventplatform
+      - NEXTAUTH_SECRET=your-secret-key-change-in-production
+      - NEXTAUTH_URL=http://localhost:3000
+    ports:
+      - "3000:3000"
+    volumes:
+      - .:/app
+      - /app/node_modules
+      - /app/.next
+    networks:
+      - eventplatform-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: npm run dev
+
+  # Production build (alternative service)
+  app-prod:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    container_name: eventplatform_app_prod
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - DATABASE_URL=postgresql://eventplatform:eventplatform_password@postgres:5432/eventplatform
+      - NEXTAUTH_SECRET=your-secret-key-change-in-production
+      - NEXTAUTH_URL=http://localhost:3000
+    ports:
+      - "3001:3000"
+    networks:
+      - eventplatform-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+    profiles:
+      - production
+
+  # Prisma Studio (Database GUI)
+  prisma-studio:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: development
+    container_name: eventplatform_prisma_studio
+    restart: unless-stopped
+    environment:
+      - DATABASE_URL=postgresql://eventplatform:eventplatform_password@postgres:5432/eventplatform
+    ports:
+      - "5555:5555"
+    networks:
+      - eventplatform-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: npx prisma studio --hostname 0.0.0.0
+    profiles:
+      - studio
+
+  # Redis (for future caching/sessions)
+  redis:
+    image: redis:7-alpine
+    container_name: eventplatform_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - eventplatform-network
+    profiles:
+      - cache
+
+networks:
+  eventplatform-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local 

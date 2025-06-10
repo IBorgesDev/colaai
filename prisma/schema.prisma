@@ -1,0 +1,168 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Enum for user roles
+enum UserRole {
+  ADMIN
+  PARTICIPANT
+}
+
+// Enum for inscription status
+enum InscriptionStatus {
+  ACTIVE
+  CANCELLED
+  CONFIRMED
+}
+
+// Enum for event status
+enum EventStatus {
+  DRAFT
+  PUBLISHED
+  CANCELLED
+  COMPLETED
+}
+
+// Main User model (encompasses both admin and participants)
+model User {
+  id           String   @id @default(uuid())
+  name         String
+  email        String   @unique
+  password     String   // Will store hashed password
+  phone        String?
+  cpf          String?  @unique
+  role         UserRole @default(PARTICIPANT)
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  // Relationships
+  organizedEvents Event[]        @relation("EventOrganizer")
+  inscriptions    Inscription[]
+  reviews         Review[]
+
+  @@map("users")
+}
+
+// Event Category model
+model EventCategory {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  description String?
+  color       String?  // For UI display
+  icon        String?  // Icon identifier
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  // Relationships
+  events Event[]
+
+  @@map("event_categories")
+}
+
+// Main Event model
+model Event {
+  id                  String      @id @default(uuid())
+  title               String
+  description         String
+  startDate           DateTime    @map("start_date")
+  endDate             DateTime    @map("end_date")
+  location            String
+  address             String?     // Detailed address for map
+  latitude            Float?      // For map display
+  longitude           Float?      // For map display
+  maxParticipants     Int         @map("max_participants")
+  price               Decimal     @default(0.00) @db.Decimal(10, 2)
+  isPublic            Boolean     @default(true) @map("is_public")
+  status              EventStatus @default(DRAFT)
+  imageUrl            String?     @map("image_url")
+  createdAt           DateTime    @default(now()) @map("created_at")
+  updatedAt           DateTime    @updatedAt @map("updated_at")
+
+  // Foreign keys
+  organizerId String @map("organizer_id")
+  categoryId  String @map("category_id")
+
+  // Relationships
+  organizer    User            @relation("EventOrganizer", fields: [organizerId], references: [id])
+  category     EventCategory   @relation(fields: [categoryId], references: [id])
+  inscriptions Inscription[]
+  reviews      Review[]
+
+  @@map("events")
+}
+
+// Inscription model (relationship between User and Event)
+model Inscription {
+  id               String            @id @default(uuid())
+  inscriptionDate  DateTime          @default(now()) @map("inscription_date")
+  status           InscriptionStatus @default(ACTIVE)
+  paid             Boolean           @default(false)
+  paymentDate      DateTime?         @map("payment_date")
+  checkInDate      DateTime?         @map("check_in_date")
+  ticketCode       String?           @unique @map("ticket_code") // QR code for entry
+  createdAt        DateTime          @default(now()) @map("created_at")
+  updatedAt        DateTime          @updatedAt @map("updated_at")
+
+  // Foreign keys
+  participantId String @map("participant_id")
+  eventId       String @map("event_id")
+
+  // Relationships
+  participant User  @relation(fields: [participantId], references: [id])
+  event       Event @relation(fields: [eventId], references: [id])
+
+  // Ensure one user can only inscribe once per event
+  @@unique([participantId, eventId])
+  @@map("inscriptions")
+}
+
+// Review model for event feedback
+model Review {
+  id        String   @id @default(uuid())
+  rating    Int      // 1 to 5 stars
+  comment   String?
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  // Foreign keys
+  userId  String @map("user_id")
+  eventId String @map("event_id")
+
+  // Relationships
+  user  User  @relation(fields: [userId], references: [id])
+  event Event @relation(fields: [eventId], references: [id])
+
+  // Ensure one review per user per event
+  @@unique([userId, eventId])
+  @@map("reviews")
+}
+
+// Indexes for performance optimization
+// These will be automatically created by Prisma, but we can be explicit about important ones
+// Users
+// @@index([email]) - already unique, so indexed automatically
+// @@index([cpf]) - already unique, so indexed automatically
+
+// Events
+// @@index([organizerId, status])
+// @@index([categoryId])
+// @@index([startDate])
+// @@index([location])
+// @@index([latitude, longitude]) - for geo queries
+
+// Inscriptions
+// @@index([participantId])
+// @@index([eventId])
+// @@index([status])
