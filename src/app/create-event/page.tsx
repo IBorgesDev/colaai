@@ -1,6 +1,8 @@
 'use client'
 
 import { useState, useEffect } from 'react'
+import { useSession } from 'next-auth/react'
+import { useRouter } from 'next/navigation'
 import { motion } from 'framer-motion'
 import { CalendarPlus, MapPin, Users, DollarSign, Clock, FileText, Shield, Upload, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -11,54 +13,71 @@ import { Textarea } from '@/components/ui/textarea'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { TagInput } from '@/components/ui/tag-input'
 import { toast } from 'sonner'
-import { useRouter } from 'next/navigation'
-import { mockAPI, mockUser } from '@/lib/mock-data'
-import { EventCategory } from '@/lib/types'
+
+interface EventCategory {
+  id: string
+  name: string
+  description: string
+  color: string
+  icon: string
+}
 
 export default function CreateEventPage() {
+  const { data: session, status } = useSession()
   const router = useRouter()
   const [loading, setLoading] = useState(false)
   const [categories, setCategories] = useState<EventCategory[]>([])
   const [formData, setFormData] = useState({
     title: '',
     description: '',
-    detailedDescription: '',
     location: '',
     address: '',
     date: '',
     time: '',
+    endDate: '',
     endTime: '',
-    capacity: '',
+    maxParticipants: '',
     price: '',
     categoryId: '',
-    tags: [] as string[],
-    requirements: '',
-    imageUrl: ''
+    imageUrl: '',
+    latitude: '',
+    longitude: ''
   })
   const [imagePreview, setImagePreview] = useState<string>('')
 
-  // Verificar se o usuário tem permissão para criar eventos
+  // Verificar autenticação e permissões
   useEffect(() => {
-    if (mockUser.role !== 'ORGANIZER' && mockUser.role !== 'ADMIN') {
-      // Redirecionar se não for organizador
+    if (status === 'loading') return
+    
+    if (!session) {
+      router.push('/auth/signin')
+      return
+    }
+    
+    if (session.user?.role !== 'ADMIN') {
       router.push('/')
-      toast.error('Apenas organizadores podem criar eventos')
+      toast.error('Apenas admins podem criar eventos')
       return
     }
     
     loadCategories()
-  }, [router])
+  }, [session, status, router])
 
   const loadCategories = async () => {
     try {
-      const categoriesData = await mockAPI.getCategories()
-      setCategories(categoriesData)
+      const response = await fetch('/api/categories')
+      if (response.ok) {
+        const categoriesData = await response.json()
+        setCategories(categoriesData)
+      } else {
+        toast.error('Erro ao carregar categorias')
+      }
     } catch (error) {
       toast.error('Erro ao carregar categorias')
     }
   }
 
-  const handleInputChange = (field: string, value: string | string[]) => {
+  const handleInputChange = (field: string, value: string) => {
     setFormData(prev => ({
       ...prev,
       [field]: value
@@ -72,32 +91,29 @@ export default function CreateEventPage() {
 
   const validateForm = () => {
     if (!formData.title || !formData.description || !formData.location || 
-        !formData.date || !formData.time || !formData.capacity || !formData.categoryId) {
+        !formData.date || !formData.time || !formData.maxParticipants || !formData.categoryId) {
       toast.error('Por favor, preencha todos os campos obrigatórios')
       return false
     }
 
     // Validar data não pode ser no passado
-    const eventDate = new Date(`${formData.date}T${formData.time}`)
-    if (eventDate < new Date()) {
+    const startDateTime = new Date(`${formData.date}T${formData.time}`)
+    if (startDateTime < new Date()) {
       toast.error('A data e hora do evento devem ser no futuro')
       return false
     }
 
-    // Validar hora de término
-    if (formData.endTime) {
-      const startTime = formData.time
-      const endTime = formData.endTime
-      
-      // Se for no mesmo dia, hora de término deve ser maior que hora de início
-      if (endTime <= startTime) {
-        toast.error('A hora de término deve ser maior que a hora de início')
+    // Validar data e hora de término se fornecidas
+    if (formData.endDate && formData.endTime) {
+      const endDateTime = new Date(`${formData.endDate}T${formData.endTime}`)
+      if (endDateTime <= startDateTime) {
+        toast.error('A data e hora de término devem ser posteriores ao início')
         return false
       }
     }
 
     // Validar capacidade
-    if (parseInt(formData.capacity) <= 0) {
+    if (parseInt(formData.maxParticipants) <= 0) {
       toast.error('A capacidade deve ser maior que zero')
       return false
     }
@@ -114,7 +130,7 @@ export default function CreateEventPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     
-    if (mockUser.role !== 'ORGANIZER' && mockUser.role !== 'ADMIN') {
+    if (!session?.user?.id || session.user.role !== 'ADMIN') {
       toast.error('Você não tem permissão para criar eventos')
       return
     }
@@ -126,18 +142,49 @@ export default function CreateEventPage() {
     try {
       setLoading(true)
       
-      const eventData = {
-        ...formData,
-        capacity: parseInt(formData.capacity),
-        price: parseFloat(formData.price || '0'),
-        tags: formData.tags,
-        requirements: formData.requirements ? formData.requirements.split('\n').filter(req => req.trim()) : []
+      // Preparar dados do evento
+      const startDate = new Date(`${formData.date}T${formData.time}`)
+      let endDate = startDate
+      
+      if (formData.endDate && formData.endTime) {
+        endDate = new Date(`${formData.endDate}T${formData.endTime}`)
+      } else {
+        // Se não foi especificada hora de término, assumir 2 horas de duração
+        endDate = new Date(startDate.getTime() + 2 * 60 * 60 * 1000)
       }
 
-      await mockAPI.createEvent(eventData)
-      
-      toast.success('Evento criado com sucesso!')
-      router.push('/my-events')
+      const eventData = {
+        title: formData.title,
+        description: formData.description,
+        startDate: startDate.toISOString(),
+        endDate: endDate.toISOString(),
+        location: formData.location,
+        address: formData.address || formData.location,
+        latitude: formData.latitude ? parseFloat(formData.latitude) : null,
+        longitude: formData.longitude ? parseFloat(formData.longitude) : null,
+        maxParticipants: parseInt(formData.maxParticipants),
+        price: parseFloat(formData.price || '0'),
+        isPublic: true,
+        imageUrl: formData.imageUrl || null,
+        organizerId: session.user.id,
+        categoryId: formData.categoryId
+      }
+
+      const response = await fetch('/api/events', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(eventData)
+      })
+
+      if (response.ok) {
+        toast.success('Evento criado com sucesso!')
+        router.push('/my-events')
+      } else {
+        const error = await response.json()
+        toast.error(error.error || 'Erro ao criar evento')
+      }
     } catch (error) {
       toast.error('Erro ao criar evento')
     } finally {
@@ -145,8 +192,22 @@ export default function CreateEventPage() {
     }
   }
 
-  // Se não for organizador, mostrar página de acesso negado
-  if (mockUser.role !== 'ORGANIZER' && mockUser.role !== 'ADMIN') {
+  // Loading state
+  if (status === 'loading') {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600" />
+      </div>
+    )
+  }
+
+  // Not authenticated
+  if (!session) {
+    return null
+  }
+
+  // Access denied for non-admins
+  if (session.user?.role !== 'ADMIN') {
     return (
       <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center">
         <Card className="w-full max-w-md">
@@ -154,7 +215,7 @@ export default function CreateEventPage() {
             <Shield className="h-12 w-12 text-red-500 mx-auto mb-4" />
             <CardTitle className="text-2xl text-red-600">Acesso Negado</CardTitle>
             <CardDescription>
-              Apenas organizadores podem criar eventos. Entre em contato conosco para se tornar um organizador.
+              Apenas administradores podem criar eventos.
             </CardDescription>
           </CardHeader>
           <CardContent>
@@ -221,27 +282,14 @@ export default function CreateEventPage() {
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="description">Descrição Breve *</Label>
+                  <Label htmlFor="description">Descrição *</Label>
                   <Textarea
                     id="description"
-                    placeholder="Breve descrição do evento (máx. 200 caracteres)"
+                    placeholder="Descrição do evento"
                     value={formData.description}
-                    onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => handleInputChange('description', e.target.value)}
-                    rows={2}
-                    maxLength={200}
+                    onChange={(e) => handleInputChange('description', e.target.value)}
+                    rows={3}
                     required
-                  />
-                  <p className="text-xs text-gray-500">{formData.description.length}/200 caracteres</p>
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="detailedDescription">Descrição Detalhada</Label>
-                  <Textarea
-                    id="detailedDescription"
-                    placeholder="Descrição completa do evento, programação, o que está incluso, etc."
-                    value={formData.detailedDescription}
-                    onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => handleInputChange('detailedDescription', e.target.value)}
-                    rows={4}
                   />
                 </div>
 
@@ -281,156 +329,174 @@ export default function CreateEventPage() {
                       </Button>
                     </div>
                   )}
-                  <p className="text-xs text-gray-500">
-                    Cole a URL de uma imagem para ser exibida como capa do evento
-                  </p>
                 </div>
 
                 {/* Localização */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div className="space-y-2">
-                    <Label htmlFor="location">Local *</Label>
-                    <div className="relative">
-                      <MapPin className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" />
+                <div className="space-y-4">
+                  <h3 className="text-lg font-medium flex items-center">
+                    <MapPin className="h-5 w-5 mr-2" />
+                    Localização
+                  </h3>
+                  
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="space-y-2">
+                      <Label htmlFor="location">Local *</Label>
                       <Input
                         id="location"
-                        placeholder="Ex: Centro de Convenções SP"
+                        placeholder="Ex: Centro de Convenções Anhembi"
                         value={formData.location}
                         onChange={(e) => handleInputChange('location', e.target.value)}
-                        className="pl-10"
                         required
                       />
                     </div>
+                    
+                    <div className="space-y-2">
+                      <Label htmlFor="address">Endereço Completo</Label>
+                      <Input
+                        id="address"
+                        placeholder="Rua, número, bairro, cidade"
+                        value={formData.address}
+                        onChange={(e) => handleInputChange('address', e.target.value)}
+                      />
+                    </div>
                   </div>
-                  
-                  <div className="space-y-2">
-                    <Label htmlFor="address">Endereço Completo</Label>
-                    <Input
-                      id="address"
-                      placeholder="Rua, número, bairro, cidade"
-                      value={formData.address}
-                      onChange={(e) => handleInputChange('address', e.target.value)}
-                    />
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="space-y-2">
+                      <Label htmlFor="latitude">Latitude (opcional)</Label>
+                      <Input
+                        id="latitude"
+                        type="number"
+                        step="any"
+                        placeholder="-23.5505"
+                        value={formData.latitude}
+                        onChange={(e) => handleInputChange('latitude', e.target.value)}
+                      />
+                    </div>
+                    
+                    <div className="space-y-2">
+                      <Label htmlFor="longitude">Longitude (opcional)</Label>
+                      <Input
+                        id="longitude"
+                        type="number"
+                        step="any"
+                        placeholder="-46.6333"
+                        value={formData.longitude}
+                        onChange={(e) => handleInputChange('longitude', e.target.value)}
+                      />
+                    </div>
                   </div>
                 </div>
 
                 {/* Data e Hora */}
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                  <div className="space-y-2">
-                    <Label htmlFor="date">Data *</Label>
-                    <Input
-                      id="date"
-                      type="date"
-                      value={formData.date}
-                      onChange={(e) => handleInputChange('date', e.target.value)}
-                      min={new Date().toISOString().split('T')[0]}
-                      required
-                    />
-                  </div>
+                <div className="space-y-4">
+                  <h3 className="text-lg font-medium flex items-center">
+                    <Clock className="h-5 w-5 mr-2" />
+                    Data e Hora
+                  </h3>
                   
-                  <div className="space-y-2">
-                    <Label htmlFor="time">Hora de Início *</Label>
-                    <div className="relative">
-                      <Clock className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" />
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="space-y-2">
+                      <Label htmlFor="date">Data de Início *</Label>
+                      <Input
+                        id="date"
+                        type="date"
+                        value={formData.date}
+                        onChange={(e) => handleInputChange('date', e.target.value)}
+                        min={new Date().toISOString().split('T')[0]}
+                        required
+                      />
+                    </div>
+                    
+                    <div className="space-y-2">
+                      <Label htmlFor="time">Hora de Início *</Label>
                       <Input
                         id="time"
                         type="time"
                         value={formData.time}
                         onChange={(e) => handleInputChange('time', e.target.value)}
-                        className="pl-10"
                         required
                       />
                     </div>
                   </div>
-                  
-                  <div className="space-y-2">
-                    <Label htmlFor="endTime">Hora de Término</Label>
-                    <div className="relative">
-                      <Clock className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" />
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="space-y-2">
+                      <Label htmlFor="endDate">Data de Término (opcional)</Label>
+                      <Input
+                        id="endDate"
+                        type="date"
+                        value={formData.endDate}
+                        onChange={(e) => handleInputChange('endDate', e.target.value)}
+                        min={formData.date}
+                      />
+                    </div>
+                    
+                    <div className="space-y-2">
+                      <Label htmlFor="endTime">Hora de Término (opcional)</Label>
                       <Input
                         id="endTime"
                         type="time"
                         value={formData.endTime}
                         onChange={(e) => handleInputChange('endTime', e.target.value)}
-                        className="pl-10"
-                        min={formData.time}
-                      />
-                    </div>
-                    {formData.time && formData.endTime && formData.endTime <= formData.time && (
-                      <p className="text-xs text-red-500">
-                        A hora de término deve ser maior que a hora de início
-                      </p>
-                    )}
-                  </div>
-                </div>
-
-                {/* Capacidade e Preço */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  <div className="space-y-2">
-                    <Label htmlFor="capacity">Capacidade *</Label>
-                    <div className="relative">
-                      <Users className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" />
-                      <Input
-                        id="capacity"
-                        type="number"
-                        placeholder="Ex: 100"
-                        value={formData.capacity}
-                        onChange={(e) => handleInputChange('capacity', e.target.value)}
-                        className="pl-10"
-                        min="1"
-                        required
                       />
                     </div>
                   </div>
                   
-                  <div className="space-y-2">
-                    <Label htmlFor="price">Preço (R$)</Label>
-                    <div className="relative">
-                      <DollarSign className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 h-4 w-4" />
+                  <p className="text-sm text-gray-500">
+                    Se não especificar o término, será assumido 2 horas de duração
+                  </p>
+                </div>
+
+                {/* Capacidade e Preço */}
+                <div className="space-y-4">
+                  <h3 className="text-lg font-medium flex items-center">
+                    <Users className="h-5 w-5 mr-2" />
+                    Capacidade e Preço
+                  </h3>
+                  
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                    <div className="space-y-2">
+                      <Label htmlFor="maxParticipants">Capacidade Máxima *</Label>
+                      <Input
+                        id="maxParticipants"
+                        type="number"
+                        min="1"
+                        placeholder="100"
+                        value={formData.maxParticipants}
+                        onChange={(e) => handleInputChange('maxParticipants', e.target.value)}
+                        required
+                      />
+                    </div>
+                    
+                    <div className="space-y-2">
+                      <Label htmlFor="price">Preço (R$)</Label>
                       <Input
                         id="price"
                         type="number"
-                        placeholder="0.00 (gratuito)"
-                        value={formData.price}
-                        onChange={(e) => handleInputChange('price', e.target.value)}
-                        className="pl-10"
                         min="0"
                         step="0.01"
+                        placeholder="0.00"
+                        value={formData.price}
+                        onChange={(e) => handleInputChange('price', e.target.value)}
                       />
+                      <p className="text-sm text-gray-500">
+                        Deixe em branco ou 0 para evento gratuito
+                      </p>
                     </div>
                   </div>
                 </div>
 
-                {/* Tags */}
-                <div className="space-y-2">
-                  <Label htmlFor="tags">Tags</Label>
-                  <TagInput
-                    value={formData.tags}
-                    onChange={(tags) => handleInputChange('tags', tags)}
-                    placeholder="Ex: tecnologia, networking, react"
-                  />
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="requirements">Requisitos/Observações</Label>
-                  <Textarea
-                    id="requirements"
-                    placeholder="Ex: Trazer laptop&#10;Conhecimento básico em programação&#10;Documento com foto"
-                    value={formData.requirements}
-                    onChange={(e: React.ChangeEvent<HTMLTextAreaElement>) => handleInputChange('requirements', e.target.value)}
-                    rows={3}
-                  />
-                  <p className="text-xs text-gray-500">
-                    Separe cada requisito em uma linha diferente
-                  </p>
-                </div>
-
-                <div className="flex space-x-4">
+                {/* Botões */}
+                <div className="flex justify-end space-x-4">
                   <Button 
-                    type="submit" 
-                    disabled={loading}
-                    className="flex-1"
+                    type="button" 
+                    variant="outline" 
+                    onClick={() => router.push('/my-events')}
                   >
+                    Cancelar
+                  </Button>
+                  <Button type="submit" disabled={loading}>
                     {loading ? (
                       <>
                         <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2" />
@@ -442,15 +508,6 @@ export default function CreateEventPage() {
                         Criar Evento
                       </>
                     )}
-                  </Button>
-                  
-                  <Button 
-                    type="button" 
-                    variant="outline" 
-                    onClick={() => router.push('/')}
-                    disabled={loading}
-                  >
-                    Cancelar
                   </Button>
                 </div>
               </form>

@@ -1,0 +1,52 @@
+version: '3.8'
+
+services:
+  # Next.js Application para EC2
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    container_name: eventplatform_app
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      # Configure esta URL para seu banco PostgreSQL existente
+      - DATABASE_URL=postgresql://username:password@localhost:5432/eventplatform
+      - NEXTAUTH_SECRET=your-very-secure-secret-key-here
+      - NEXTAUTH_URL=http://your-ec2-ip:3000
+    ports:
+      - "3000:3000"
+    # Se usar banco local na EC2, usar network_mode: host
+    network_mode: host
+    
+  # Serviço para executar migrações (executar uma vez)
+  migration:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: development
+    container_name: eventplatform_migration
+    environment:
+      - DATABASE_URL=postgresql://username:password@localhost:5432/eventplatform
+    network_mode: host
+    command: npx prisma db push
+    profiles:
+      - migration
+
+  # Nginx (opcional - para proxy reverso)
+  nginx:
+    image: nginx:alpine
+    container_name: eventplatform_nginx
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      # Para SSL (opcional)
+      # - ./ssl:/etc/nginx/ssl:ro
+    depends_on:
+      - app
+    profiles:
+      - nginx 

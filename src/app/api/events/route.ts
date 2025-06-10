@@ -10,10 +10,19 @@ export async function GET(request: NextRequest) {
     const location = searchParams.get('location')
     const startDate = searchParams.get('startDate')
     const endDate = searchParams.get('endDate')
+    const organizerId = searchParams.get('organizerId')
 
-    const where: any = {
-      status: 'PUBLISHED',
-      isPublic: true,
+    const where: any = {}
+
+    // If organizerId is provided, don't filter by status/isPublic (for admin viewing their own events)
+    if (!organizerId) {
+      where.status = 'PUBLISHED'
+      where.isPublic = true
+    }
+
+    // Organizer filter
+    if (organizerId) {
+      where.organizerId = organizerId
     }
 
     // Search filter

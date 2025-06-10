@@ -2,6 +2,7 @@
 
 import { useState, useEffect, Suspense } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
+import { useSession } from 'next-auth/react'
 import { motion } from 'framer-motion'
 import { 
   CreditCard, Smartphone, Receipt, DollarSign, Check, X, Clock,
@@ -16,8 +17,36 @@ import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { Separator } from '@/components/ui/separator'
 import { Badge } from '@/components/ui/badge'
 import { toast } from 'sonner'
-import { mockAPI } from '@/lib/mock-data'
-import { Event } from '@/lib/types'
+
+interface Event {
+  id: string
+  title: string
+  description: string
+  startDate: string
+  endDate: string
+  location: string
+  address: string
+  latitude: number | null
+  longitude: number | null
+  maxParticipants: number
+  price: number
+  imageUrl: string | null
+  status: string
+  isPublic: boolean
+  category?: {
+    id: string
+    name: string
+    color: string
+  }
+  organizer: {
+    id: string
+    name: string
+    email: string
+  }
+  _count?: {
+    inscriptions: number
+  }
+}
 
 // Cartões de teste
 const testCards = {
@@ -44,6 +73,7 @@ const testCards = {
 function PaymentContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
+  const { data: session } = useSession()
   const eventId = searchParams.get('eventId')
   
   const [event, setEvent] = useState<Event | null>(null)
@@ -77,13 +107,14 @@ function PaymentContent() {
   const loadEventDetails = async () => {
     try {
       setLoading(true)
-      const eventData = await mockAPI.getEvent(eventId!)
-      if (!eventData) {
+      const response = await fetch(`/api/events/${eventId}`)
+      if (response.ok) {
+        const eventData = await response.json()
+        setEvent(eventData)
+      } else {
         toast.error('Evento não encontrado')
         router.push('/')
-        return
       }
-      setEvent(eventData)
     } catch (error) {
       toast.error('Erro ao carregar dados do evento')
       router.push('/')
@@ -148,7 +179,7 @@ function PaymentContent() {
   }
 
   const handlePayment = async () => {
-    if (!event) return
+    if (!event || !session?.user?.id) return
 
     try {
       setProcessing(true)
@@ -159,15 +190,45 @@ function PaymentContent() {
       const result = await simulatePayment()
       
       if (result === 'success') {
-        // Registrar no evento
-        await mockAPI.registerForEvent(eventId!, 'PAID')
-        toast.success('Pagamento aprovado! Você foi inscrito no evento.')
-        router.push(`/event/${eventId}?payment=success`)
+        // Registrar no evento usando a API real
+        const response = await fetch('/api/inscriptions', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            eventId: event.id,
+            participantId: session.user.id,
+            paymentStatus: 'PAID'
+          })
+        })
+
+        if (response.ok) {
+          toast.success('Pagamento aprovado! Você foi inscrito no evento.')
+          router.push(`/event/${eventId}?payment=success`)
+        } else {
+          toast.error('Erro ao registrar inscrição')
+        }
       } else if (result === 'pending') {
         // Registrar no evento mas com pagamento pendente
-        await mockAPI.registerForEvent(eventId!, 'PENDING')
-        toast.warning('Pagamento em análise. Você receberá a confirmação em breve.')
-        router.push(`/event/${eventId}?payment=pending`)
+        const response = await fetch('/api/inscriptions', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            eventId: event.id,
+            participantId: session.user.id,
+            paymentStatus: 'PENDING'
+          })
+        })
+
+        if (response.ok) {
+          toast.warning('Pagamento em análise. Você receberá a confirmação em breve.')
+          router.push(`/event/${eventId}?payment=pending`)
+        } else {
+          toast.error('Erro ao registrar inscrição')
+        }
       } else {
         toast.error('Pagamento recusado. Tente novamente com outro cartão.')
       }
@@ -467,7 +528,7 @@ function PaymentContent() {
                     ) : (
                       <>
                         <Shield className="h-4 w-4 mr-2" />
-                        Confirmar Pagamento - R$ {event.price.toFixed(2)}
+                        Confirmar Pagamento - R$ {Number(event.price).toFixed(2)}
                       </>
                     )}
                   </Button>
@@ -528,7 +589,7 @@ function PaymentContent() {
                   <div className="space-y-2">
                     <div className="flex justify-between text-sm">
                       <span>Inscrição no evento</span>
-                      <span>R$ {event.price.toFixed(2)}</span>
+                      <span>R$ {Number(event.price).toFixed(2)}</span>
                     </div>
                     <div className="flex justify-between text-sm">
                       <span>Taxa de processamento</span>
@@ -540,7 +601,7 @@ function PaymentContent() {
 
                   <div className="flex justify-between font-medium">
                     <span>Total</span>
-                    <span>R$ {event.price.toFixed(2)}</span>
+                    <span>R$ {Number(event.price).toFixed(2)}</span>
                   </div>
 
                   <div className="bg-blue-50 p-3 rounded-lg">

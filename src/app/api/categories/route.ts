@@ -5,18 +5,6 @@ import { prisma } from '@/lib/prisma'
 export async function GET() {
   try {
     const categories = await prisma.eventCategory.findMany({
-      include: {
-        _count: {
-          select: {
-            events: {
-              where: {
-                status: 'PUBLISHED',
-                isPublic: true
-              }
-            }
-          }
-        }
-      },
       orderBy: {
         name: 'asc'
       }

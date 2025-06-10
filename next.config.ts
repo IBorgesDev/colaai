@@ -1,12 +1,12 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  // Enable standalone output for Docker production builds
-  output: 'standalone',
+  // Remove standalone output for Vercel deployment
+  // output: 'standalone', // Only for Docker builds
   
   // Optimize images for production
   images: {
-    domains: ['localhost'],
+    domains: ['localhost', 'vercel.app'],
     unoptimized: false,
   },
   
@@ -75,6 +75,11 @@ const nextConfig: NextConfig = {
   
   // React strict mode
   reactStrictMode: true,
+  
+  // Experimental features for better performance
+  experimental: {
+    optimizePackageImports: ['lucide-react', '@radix-ui/react-icons'],
+  },
 };
 
 export default nextConfig;

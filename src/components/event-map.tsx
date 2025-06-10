@@ -135,7 +135,7 @@ export function EventMap({ events, selectedEvent, onEventSelect }: EventMapProps
             </div>
             <div style="display: flex; justify-content: space-between; align-items: center;">
               <div style="font-weight: bold; color: ${categoryColor};">
-                ${event.price === 0 ? 'Gratuito' : `R$ ${event.price.toFixed(2)}`}
+                ${event.price === 0 ? 'Gratuito' : `R$ ${Number(event.price).toFixed(2)}`}
               </div>
               ${event.isUserRegistered 
                 ? '<div style="background: #10b981; color: white; padding: 2px 8px; border-radius: 12px; font-size: 11px;">✓ Inscrito</div>'

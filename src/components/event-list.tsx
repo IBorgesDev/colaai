@@ -101,7 +101,7 @@ export function EventList({
                     </span>
                   </div>
                   <div className="text-right font-medium">
-                    {event.price === 0 ? 'Gratuito' : `R$ ${event.price.toFixed(2)}`}
+                    {event.price === 0 ? 'Gratuito' : `R$ ${Number(event.price).toFixed(2)}`}
                   </div>
                 </div>
                 

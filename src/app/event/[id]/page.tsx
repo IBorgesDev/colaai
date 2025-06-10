@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect } from 'react'
-import { useParams, useRouter } from 'next/navigation'
+import { useParams, useRouter, useSearchParams } from 'next/navigation'
 import { motion } from 'framer-motion'
 import { 
   Calendar, Clock, MapPin, Users, Star, DollarSign, 
@@ -15,13 +15,56 @@ import { Badge } from '@/components/ui/badge'
 import { Avatar, AvatarFallback, AvatarImage } from '@/components/ui/avatar'
 import { Textarea } from '@/components/ui/textarea'
 import { toast } from 'sonner'
-import { mockAPI } from '@/lib/mock-data'
-import { Event, EventReview } from '@/lib/types'
+import { useSession } from 'next-auth/react'
+
+interface Event {
+  id: string
+  title: string
+  description: string
+  startDate: string
+  endDate: string
+  location: string
+  address: string | null
+  latitude: number | null
+  longitude: number | null
+  maxParticipants: number
+  price: number
+  imageUrl: string | null
+  status: string
+  isPublic: boolean
+  category?: {
+    id: string
+    name: string
+    color: string
+  }
+  organizer: {
+    id: string
+    name: string
+    email: string
+  }
+  _count?: {
+    inscriptions: number
+  }
+}
+
+interface EventReview {
+  id: string
+  rating: number
+  comment: string | null
+  createdAt: string
+  user: {
+    id: string
+    name: string
+  }
+}
 
 export default function EventDetailPage() {
   const params = useParams()
   const router = useRouter()
+  const searchParams = useSearchParams()
+  const { data: session } = useSession()
   const eventId = params.id as string
+  const paymentStatus = searchParams.get('payment')
   
   const [event, setEvent] = useState<Event | null>(null)
   const [reviews, setReviews] = useState<EventReview[]>([])
@@ -31,22 +74,47 @@ export default function EventDetailPage() {
   const [reviewText, setReviewText] = useState('')
   const [reviewRating, setReviewRating] = useState(5)
   const [submittingReview, setSubmittingReview] = useState(false)
+  const [userInscription, setUserInscription] = useState<any>(null)
 
   useEffect(() => {
     loadEventDetails()
-  }, [eventId])
+    
+    // Mostrar mensagem de sucesso do pagamento
+    if (paymentStatus === 'success') {
+      toast.success('Pagamento realizado com sucesso! Você foi inscrito no evento.')
+    } else if (paymentStatus === 'pending') {
+      toast.warning('Pagamento em análise. Você receberá a confirmação em breve.')
+    }
+  }, [eventId, paymentStatus])
 
   const loadEventDetails = async () => {
     try {
       setLoading(true)
-      const [eventData, reviewsData] = await Promise.all([
-        mockAPI.getEvent(eventId),
-        mockAPI.getEventReviews(eventId)
-      ])
       
+      // Carregar dados do evento
+      const eventResponse = await fetch(`/api/events/${eventId}`)
+      if (!eventResponse.ok) {
+        throw new Error('Evento não encontrado')
+      }
+      const eventData = await eventResponse.json()
       setEvent(eventData)
-      setReviews(reviewsData)
+
+      // Carregar inscrição do usuário se logado
+      if (session?.user?.id) {
+        try {
+          const inscriptionsResponse = await fetch(`/api/inscriptions?userId=${session.user.id}`)
+          if (inscriptionsResponse.ok) {
+            const inscriptions = await inscriptionsResponse.json()
+            const userInscription = inscriptions.find((i: any) => i.eventId === eventId && i.status !== 'CANCELLED')
+            setUserInscription(userInscription)
+          }
+        } catch (error) {
+          console.log('Erro ao carregar inscrições:', error)
+        }
+      }
+      
     } catch (error) {
+      console.error('Erro ao carregar evento:', error)
       toast.error('Erro ao carregar detalhes do evento')
       router.push('/')
     } finally {
@@ -55,33 +123,54 @@ export default function EventDetailPage() {
   }
 
   const handleRegister = async () => {
-    if (!event) return
-
-    // Verificar se o usuário pode se inscrever
-    const currentUser = await mockAPI.getCurrentUser()
-    if (currentUser.role === 'ORGANIZER') {
-      toast.error('Organizadores não podem se inscrever em eventos')
+    if (!event || !session?.user?.id) {
+      toast.error('Você precisa fazer login para se inscrever')
       return
     }
 
     try {
       setRegistering(true)
       
-      if (event.isUserRegistered) {
-        await mockAPI.unregisterFromEvent(eventId)
-        toast.success('Inscrição cancelada com sucesso!')
-        await loadEventDetails()
+      if (userInscription) {
+        // Cancelar inscrição
+        const response = await fetch(`/api/inscriptions/${userInscription.id}?userId=${session.user.id}`, {
+          method: 'DELETE'
+        })
+
+        if (response.ok) {
+          toast.success('Inscrição cancelada com sucesso!')
+          setUserInscription(null)
+        } else {
+          const error = await response.json()
+          toast.error(error.error || 'Erro ao cancelar inscrição')
+        }
       } else {
         // Se o evento tem preço, redirecionar para pagamento
-        if (event.price > 0) {
+        if (Number(event.price) > 0) {
           router.push(`/payment?eventId=${eventId}`)
           return
         }
         
         // Se é gratuito, fazer inscrição direta
-        await mockAPI.registerForEvent(eventId)
-        toast.success('Inscrição realizada com sucesso!')
-        await loadEventDetails()
+        const response = await fetch('/api/inscriptions', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            eventId: event.id,
+            participantId: session.user.id,
+            paymentStatus: 'PAID'
+          })
+        })
+
+        if (response.ok) {
+          toast.success('Inscrição realizada com sucesso!')
+          await loadEventDetails()
+        } else {
+          const error = await response.json()
+          toast.error(error.error || 'Erro ao realizar inscrição')
+        }
       }
     } catch (error) {
       toast.error('Erro ao processar inscrição')
@@ -98,11 +187,10 @@ export default function EventDetailPage() {
 
     try {
       setSubmittingReview(true)
-      await mockAPI.addEventReview(eventId, reviewRating, reviewText)
+      // TODO: Implementar API de reviews quando necessário
+      toast.info('Funcionalidade de reviews será implementada em breve')
       setReviewText('')
       setReviewRating(5)
-      await loadEventDetails()
-      toast.success('Avaliação enviada com sucesso!')
     } catch (error) {
       toast.error('Erro ao enviar avaliação')
     } finally {
@@ -239,17 +327,17 @@ export default function EventDetailPage() {
                       <div className="flex items-center space-x-4 text-sm text-gray-600 mb-4">
                         <div className="flex items-center space-x-1">
                           <Star className="h-4 w-4 text-yellow-400 fill-current" />
-                          <span>{event.rating} ({event.totalReviews} avaliações)</span>
+                          <span>4.5 (10 avaliações)</span>
                         </div>
                         <div className="flex items-center space-x-1">
                           <Users className="h-4 w-4" />
-                          <span>{event.capacity - (event.availableSpots || 0)}/{event.capacity} inscritos</span>
+                          <span>{event._count?.inscriptions || 0}/{event.maxParticipants} inscritos</span>
                         </div>
                       </div>
                     </div>
                     <div className="text-right">
                       <div className="text-2xl font-bold text-green-600">
-                        {event.price === 0 ? 'Gratuito' : `R$ ${event.price.toFixed(2)}`}
+                        {event.price === 0 ? 'Gratuito' : `R$ ${Number(event.price).toFixed(2)}`}
                       </div>
                     </div>
                   </div>
@@ -259,13 +347,13 @@ export default function EventDetailPage() {
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
                     <div className="flex items-center space-x-2">
                       <Calendar className="h-5 w-5 text-gray-500" />
-                      <span>{formatDate(event.date)}</span>
+                      <span>{formatDate(event.startDate)}</span>
                     </div>
                     <div className="flex items-center space-x-2">
                       <Clock className="h-5 w-5 text-gray-500" />
                       <span>
-                        {formatTime(event.time)}
-                        {event.endTime && ` - ${formatTime(event.endTime)}`}
+                        {formatTime(event.startDate)}
+                        {event.endDate && ` - ${formatTime(event.endDate)}`}
                       </span>
                     </div>
                     <div className="flex items-center space-x-2 md:col-span-2">
@@ -279,106 +367,42 @@ export default function EventDetailPage() {
                     )}
                   </div>
 
-                  {/* Tags */}
-                  {event.tags && event.tags.length > 0 && (
-                    <div className="mb-6">
-                      <div className="flex items-center space-x-2 mb-2">
-                        <Tag className="h-4 w-4 text-gray-500" />
-                        <span className="text-sm font-medium">Tags</span>
-                      </div>
-                      <div className="flex flex-wrap gap-2">
-                        {event.tags.map((tag, index) => (
-                          <Badge key={index} variant="outline">
-                            {tag}
-                          </Badge>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
                   <div className="prose max-w-none">
                     <h3 className="text-lg font-semibold mb-2">Sobre o evento</h3>
                     <p className="text-gray-700 mb-4">{event.description}</p>
-                    {event.detailedDescription && (
-                      <div className="text-gray-700 whitespace-pre-wrap">
-                        {event.detailedDescription}
-                      </div>
-                    )}
                   </div>
-
-                  {/* Requirements */}
-                  {event.requirements && event.requirements.length > 0 && (
-                    <div className="mt-6">
-                      <h3 className="text-lg font-semibold mb-2">Requisitos e observações</h3>
-                      <ul className="list-disc list-inside space-y-1 text-gray-700">
-                        {event.requirements.map((req, index) => (
-                          <li key={index}>{req}</li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
                 </CardContent>
               </Card>
             </motion.div>
 
             {/* Organizer Info */}
-            {event.organizer && (
-              <motion.div
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.5, delay: 0.1 }}
-              >
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="text-lg">Organizador</CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="flex items-start space-x-4">
-                      <Avatar className="h-16 w-16">
-                        <AvatarImage src={event.organizer.avatar} />
-                        <AvatarFallback>
-                          {event.organizer.name.split(' ').map(n => n[0]).join('')}
-                        </AvatarFallback>
-                      </Avatar>
-                      <div className="flex-1">
-                        <h4 className="font-semibold text-lg">{event.organizer.name}</h4>
-                        {event.organizer.company && (
-                          <div className="flex items-center space-x-1 text-sm text-gray-600 mb-1">
-                            <Building className="h-4 w-4" />
-                            <span>{event.organizer.company}</span>
-                          </div>
-                        )}
-                        <div className="flex items-center space-x-4 text-sm text-gray-600 mb-2">
-                          <div className="flex items-center space-x-1">
-                            <Star className="h-4 w-4 text-yellow-400 fill-current" />
-                            <span>{event.organizer.rating}</span>
-                          </div>
-                          <div className="flex items-center space-x-1">
-                            <Award className="h-4 w-4" />
-                            <span>{event.organizer.totalEvents} eventos</span>
-                          </div>
-                        </div>
-                        {event.organizer.bio && (
-                          <p className="text-gray-700 mb-3">{event.organizer.bio}</p>
-                        )}
-                        <div className="flex space-x-4 text-sm">
-                          {event.organizer.phone && (
-                            <div className="flex items-center space-x-1">
-                              <Phone className="h-4 w-4" />
-                              <span>{event.organizer.phone}</span>
-                            </div>
-                          )}
-                          <div className="flex items-center space-x-1">
-                            <Mail className="h-4 w-4" />
-                            <span>{event.organizer.email}</span>
-                          </div>
-                        </div>
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.5, delay: 0.1 }}
+            >
+              <Card>
+                <CardHeader>
+                  <CardTitle className="text-lg">Organizador</CardTitle>
+                </CardHeader>
+                <CardContent>
+                  <div className="flex items-start space-x-4">
+                    <Avatar className="h-16 w-16">
+                      <AvatarFallback>
+                        {event.organizer.name.split(' ').map(n => n[0]).join('')}
+                      </AvatarFallback>
+                    </Avatar>
+                    <div className="flex-1">
+                      <h4 className="font-semibold text-lg">{event.organizer.name}</h4>
+                      <div className="flex items-center space-x-1">
+                        <Mail className="h-4 w-4" />
+                        <span>{event.organizer.email}</span>
                       </div>
                     </div>
-                  </CardContent>
-                </Card>
-              </motion.div>
-            )}
+                  </div>
+                </CardContent>
+              </Card>
+            </motion.div>
 
             {/* Reviews */}
             <motion.div
@@ -389,7 +413,7 @@ export default function EventDetailPage() {
               <Card>
                 <CardHeader>
                   <CardTitle className="text-lg">
-                    Avaliações ({event.totalReviews})
+                    Avaliações
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
@@ -433,14 +457,13 @@ export default function EventDetailPage() {
                       <div key={review.id} className="border-b pb-4 last:border-b-0">
                         <div className="flex items-start space-x-3">
                           <Avatar className="h-10 w-10">
-                            <AvatarImage src={review.userAvatar} />
                             <AvatarFallback>
-                              {review.userName.split(' ').map(n => n[0]).join('')}
+                              {review.user.name.split(' ').map(n => n[0]).join('')}
                             </AvatarFallback>
                           </Avatar>
                           <div className="flex-1">
                             <div className="flex items-center space-x-2 mb-1">
-                              <span className="font-medium">{review.userName}</span>
+                              <span className="font-medium">{review.user.name}</span>
                               {renderStars(review.rating)}
                               <span className="text-xs text-gray-500">
                                 {new Date(review.createdAt).toLocaleDateString('pt-BR')}
@@ -476,30 +499,30 @@ export default function EventDetailPage() {
                 <CardHeader>
                   <div className="text-center">
                     <div className="text-3xl font-bold text-green-600 mb-2">
-                      {event.price === 0 ? 'Gratuito' : `R$ ${event.price.toFixed(2)}`}
+                      {event.price === 0 ? 'Gratuito' : `R$ ${Number(event.price).toFixed(2)}`}
                     </div>
                     <div className="text-sm text-gray-600">
-                      {event.availableSpots} vagas disponíveis
+                      {Math.max(0, event.maxParticipants - (event._count?.inscriptions || 0))} vagas disponíveis
                     </div>
                   </div>
                 </CardHeader>
                 <CardContent className="space-y-4">
                   <Button 
                     onClick={handleRegister}
-                    disabled={registering || event.availableSpots === 0}
+                    disabled={registering || (event.maxParticipants - (event._count?.inscriptions || 0)) <= 0}
                     className="w-full"
-                    variant={event.isUserRegistered ? "destructive" : "default"}
+                    variant={userInscription ? "destructive" : "default"}
                   >
                     {registering ? (
                       <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white" />
-                    ) : event.availableSpots === 0 ? (
+                    ) : (event.maxParticipants - (event._count?.inscriptions || 0)) <= 0 ? (
                       'Esgotado'
-                    ) : event.isUserRegistered ? (
+                    ) : userInscription ? (
                       <>
                         <XCircle className="h-4 w-4 mr-2" />
                         Cancelar Inscrição
                       </>
-                    ) : event.price > 0 ? (
+                    ) : Number(event.price) > 0 ? (
                       <>
                         <CheckCircle className="h-4 w-4 mr-2" />
                         Pagar e Inscrever-se
@@ -512,7 +535,7 @@ export default function EventDetailPage() {
                     )}
                   </Button>
 
-                  {event.isUserRegistered && (
+                  {userInscription && (
                     <div className="space-y-3">
                       <div className="text-center">
                         <Badge variant="default" className="bg-green-600">
@@ -530,15 +553,13 @@ export default function EventDetailPage() {
                         {showQRCode ? 'Ocultar' : 'Mostrar'} QR Code
                       </Button>
                       
-                      {showQRCode && event.qrCode && (
+                      {showQRCode && userInscription.ticketCode && (
                         <div className="text-center p-4 bg-white rounded-lg border">
-                          <img 
-                            src={event.qrCode}
-                            alt="QR Code do evento"
-                            className="mx-auto mb-2"
-                          />
+                          <div className="text-xs text-gray-600 mb-2">
+                            Código do Ticket: {userInscription.ticketCode}
+                          </div>
                           <p className="text-xs text-gray-600">
-                            Apresente este QR Code na entrada do evento
+                            Apresente este código na entrada do evento
                           </p>
                         </div>
                       )}

@@ -54,7 +54,7 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
-    const { eventId, participantId } = body
+    const { eventId, participantId, paymentStatus } = body
 
     if (!eventId || !participantId) {
       return NextResponse.json(
@@ -182,13 +182,17 @@ export async function POST(request: NextRequest) {
     // Generate unique ticket code
     const ticketCode = `TICKET-${eventId.slice(-8)}-${participantId.slice(-8)}-${Date.now()}`
 
+    // Determine payment status
+    const isPaid = Number(event.price) === 0 || paymentStatus === 'PAID'
+    const inscriptionStatus = paymentStatus === 'PENDING' ? 'CONFIRMED' : 'ACTIVE'
+
     // Create new inscription
     const inscription = await prisma.inscription.create({
       data: {
         participantId,
         eventId,
-        status: 'ACTIVE',
-        paid: Number(event.price) === 0, // Auto-mark as paid if free event
+        status: inscriptionStatus,
+        paid: isPaid,
         ticketCode
       },
       include: {

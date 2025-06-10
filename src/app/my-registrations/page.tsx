@@ -2,45 +2,153 @@
 
 import { useState, useEffect } from 'react'
 import { motion } from 'framer-motion'
-import { Calendar, MapPin, Clock, XCircle, CheckCircle, BookmarkCheck } from 'lucide-react'
+import { 
+  Calendar, Clock, MapPin, BookmarkCheck, 
+  CheckCircle, XCircle, AlertCircle
+} from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { toast } from 'sonner'
-import { mockAPI } from '@/lib/mock-data'
-import { Inscription } from '@/lib/types'
+import { useSession } from 'next-auth/react'
+
+interface Inscription {
+  id: string
+  status: string
+  paid: boolean
+  ticketCode: string
+  inscriptionDate: string
+  event: {
+    id: string
+    title: string
+    description: string
+    startDate: string
+    endDate: string
+    location: string
+    price: number
+    imageUrl: string | null
+    category?: {
+      id: string
+      name: string
+      color: string
+    }
+  }
+}
 
 export default function MyRegistrationsPage() {
   const [inscriptions, setInscriptions] = useState<Inscription[]>([])
   const [loading, setLoading] = useState(true)
   const [cancelling, setCancelling] = useState<string | null>(null)
+  const { data: session, status } = useSession()
 
   useEffect(() => {
-    loadMyInscriptions()
-  }, [])
+    console.log('Session status:', status, 'Session data:', session)
+    if (status === 'authenticated' && session?.user?.id) {
+      console.log('User authenticated with ID:', session.user.id)
+      loadMyInscriptions()
+    } else if (status === 'unauthenticated') {
+      setLoading(false)
+    }
+  }, [session, status])
 
   const loadMyInscriptions = async () => {
+    const userId = session?.user?.id
+    if (!userId) {
+      console.log('No user ID available for loading inscriptions')
+      return
+    }
+
     try {
       setLoading(true)
-      const inscriptionsData = await mockAPI.getMyInscriptions()
-      setInscriptions(inscriptionsData)
+      console.log('Loading inscriptions for user:', userId)
+      const response = await fetch(`/api/inscriptions?userId=${userId}`)
+      if (response.ok) {
+        const inscriptionsData = await response.json()
+        console.log('Loaded inscriptions:', inscriptionsData.length)
+        setInscriptions(inscriptionsData)
+      } else {
+        toast.error('Erro ao carregar inscrições')
+      }
     } catch (error) {
+      console.error('Error loading inscriptions:', error)
       toast.error('Erro ao carregar inscrições')
     } finally {
       setLoading(false)
     }
   }
 
-  const handleCancelRegistration = async (eventId: string) => {
+  const handleCancelRegistration = async (inscriptionId: string) => {
+    console.log('=== CANCEL REGISTRATION START ===')
+    console.log('Inscription ID:', inscriptionId)
+    
+    // Usar diretamente o userId da sessão
+    const userId = session?.user?.id
+    console.log('User ID from session:', userId)
+
+    if (!userId) {
+      console.log('ERROR: No user ID available')
+      toast.error('ID de usuário não encontrado. Faça login novamente.')
+      return
+    }
+
     try {
-      setCancelling(eventId)
-      await mockAPI.unregisterFromEvent(eventId)
-      toast.success('Inscrição cancelada com sucesso!')
-      await loadMyInscriptions()
+      setCancelling(inscriptionId)
+      
+      const url = `/api/inscriptions/${inscriptionId}?userId=${userId}`
+      console.log('DELETE URL:', url)
+      
+      const response = await fetch(url, {
+        method: 'DELETE',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      })
+
+      console.log('Response status:', response.status)
+
+      if (response.ok) {
+        const result = await response.json()
+        console.log('SUCCESS: Cancel response:', result)
+        toast.success('Inscrição cancelada com sucesso!')
+        await loadMyInscriptions()
+      } else {
+        const error = await response.json()
+        console.error('ERROR: Cancel response:', error)
+        toast.error(error.error || 'Erro ao cancelar inscrição')
+      }
     } catch (error) {
+      console.error('FATAL ERROR in cancel request:', error)
       toast.error('Erro ao cancelar inscrição')
     } finally {
       setCancelling(null)
+      console.log('=== CANCEL REGISTRATION END ===')
+    }
+  }
+
+  const testCancelRegistration = async (inscriptionId: string) => {
+    console.log('=== TEST CANCEL FUNCTION CALLED ===')
+    console.log('Inscription ID:', inscriptionId)
+    console.log('Session status:', status)
+    console.log('Session exists:', !!session)
+    console.log('Session user exists:', !!session?.user)
+    console.log('Session user ID exists:', !!session?.user?.id)
+    console.log('Session user ID value:', session?.user?.id)
+    
+    if (session?.user?.id) {
+      const testUrl = `/api/inscriptions/${inscriptionId}?userId=${session.user.id}`
+      console.log('Test URL would be:', testUrl)
+      
+      try {
+        console.log('Making test request...')
+        const response = await fetch(testUrl, { method: 'DELETE' })
+        console.log('Test response status:', response.status)
+        const data = await response.json()
+        console.log('Test response data:', data)
+      } catch (error) {
+        console.log('Test request error:', error)
+      }
+    } else {
+      console.log('NO USER ID AVAILABLE FOR TEST')
     }
   }
 
@@ -53,8 +161,11 @@ export default function MyRegistrationsPage() {
     })
   }
 
-  const formatTime = (timeStr: string) => {
-    return timeStr.slice(0, 5) // HH:MM
+  const formatTime = (dateStr: string) => {
+    return new Date(dateStr).toLocaleTimeString('pt-BR', {
+      hour: '2-digit',
+      minute: '2-digit'
+    })
   }
 
   const formatRegistrationDate = (dateStr: string) => {
@@ -67,9 +178,10 @@ export default function MyRegistrationsPage() {
 
   const getStatusColor = (status: string) => {
     switch (status) {
+      case 'ACTIVE':
       case 'CONFIRMED':
         return 'bg-green-600'
-      case 'WAITING':
+      case 'PENDING':
         return 'bg-yellow-600'
       case 'CANCELLED':
         return 'bg-red-600'
@@ -80,10 +192,12 @@ export default function MyRegistrationsPage() {
 
   const getStatusText = (status: string) => {
     switch (status) {
+      case 'ACTIVE':
+        return 'Ativo'
       case 'CONFIRMED':
         return 'Confirmado'
-      case 'WAITING':
-        return 'Lista de Espera'
+      case 'PENDING':
+        return 'Pendente'
       case 'CANCELLED':
         return 'Cancelado'
       default:
@@ -194,7 +308,7 @@ export default function MyRegistrationsPage() {
                           
                           <div className="text-right ml-4">
                             <p className="text-lg font-bold text-gray-900">
-                              {event.price === 0 ? 'Gratuito' : `R$ ${event.price.toFixed(2)}`}
+                              {event.price === 0 ? 'Gratuito' : `R$ ${Number(event.price).toFixed(2)}`}
                             </p>
                           </div>
                         </div>
@@ -203,11 +317,11 @@ export default function MyRegistrationsPage() {
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
                           <div className="flex items-center space-x-2 text-sm text-gray-600">
                             <Calendar className="h-4 w-4" />
-                            <span>{formatDate(event.date)}</span>
+                            <span>{formatDate(event.startDate)}</span>
                           </div>
                           <div className="flex items-center space-x-2 text-sm text-gray-600">
                             <Clock className="h-4 w-4" />
-                            <span>{formatTime(event.time)}</span>
+                            <span>{formatTime(event.startDate)}</span>
                           </div>
                           <div className="flex items-center space-x-2 text-sm text-gray-600">
                             <MapPin className="h-4 w-4" />
@@ -218,29 +332,79 @@ export default function MyRegistrationsPage() {
                         {/* Informações da inscrição */}
                         <div className="flex justify-between items-center pt-4 border-t">
                           <div className="text-sm text-gray-500">
-                            Inscrito em: {formatRegistrationDate(inscription.registeredAt)}
+                            Inscrito em: {formatRegistrationDate(inscription.inscriptionDate)}
                           </div>
                           
-                          {inscription.status === 'CONFIRMED' && (
+                          <div className="flex space-x-2">
+                            {/* Test button */}
                             <Button
-                              variant="destructive"
+                              variant="secondary"
                               size="sm"
-                              onClick={() => handleCancelRegistration(event.id)}
-                              disabled={cancelling === event.id}
+                              onClick={() => {
+                                const userId = session?.user?.id
+                                console.log('=== SIMPLE TEST ===')
+                                console.log('Saved User ID:', userId)
+                                console.log('Session User ID:', session?.user?.id)
+                                console.log('Final User ID:', userId)
+                                if (userId) {
+                                  console.log('Would call:', `/api/inscriptions/${inscription.id}?userId=${userId}`)
+                                  testCancelRegistration(inscription.id)
+                                } else {
+                                  console.log('NO USER ID AVAILABLE')
+                                  toast.error('No user ID available')
+                                }
+                              }}
                             >
-                              {cancelling === event.id ? (
-                                <div className="flex items-center space-x-2">
-                                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white" />
-                                  <span>Cancelando...</span>
-                                </div>
-                              ) : (
-                                <>
-                                  <XCircle className="h-4 w-4 mr-1" />
-                                  Cancelar Inscrição
-                                </>
-                              )}
+                              🧪 Test
                             </Button>
-                          )}
+
+                            {/* Debug button */}
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={async () => {
+                                const userId = session?.user?.id
+                                if (!userId) {
+                                  console.log('No user ID for debug')
+                                  toast.error('No user ID available')
+                                  return
+                                }
+                                console.log('=== DEBUG TEST ===')
+                                console.log('Using User ID:', userId)
+                                try {
+                                  const response = await fetch(`/api/inscriptions/${inscription.id}?userId=${userId}`)
+                                  const data = await response.json()
+                                  console.log('Debug response:', data)
+                                  toast.info('Debug info logged to console')
+                                } catch (error) {
+                                  console.error('Debug error:', error)
+                                }
+                              }}
+                            >
+                              🐛 Debug
+                            </Button>
+
+                            {(session?.user?.id) && (inscription.status === 'ACTIVE' || inscription.status === 'CONFIRMED') && (
+                              <Button
+                                variant="destructive"
+                                size="sm"
+                                onClick={() => handleCancelRegistration(inscription.id)}
+                                disabled={cancelling === inscription.id}
+                              >
+                                {cancelling === inscription.id ? (
+                                  <div className="flex items-center space-x-2">
+                                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white" />
+                                    <span>Cancelando...</span>
+                                  </div>
+                                ) : (
+                                  <>
+                                    <XCircle className="h-4 w-4 mr-1" />
+                                    Cancelar Inscrição
+                                  </>
+                                )}
+                              </Button>
+                            )}
+                          </div>
                         </div>
                       </div>
                     </div>
@@ -265,9 +429,9 @@ export default function MyRegistrationsPage() {
                   <CheckCircle className="h-8 w-8 text-green-600" />
                   <div>
                     <p className="text-2xl font-bold text-gray-900">
-                      {inscriptions.filter(i => i.status === 'CONFIRMED').length}
+                      {inscriptions.filter(i => i.status === 'ACTIVE' || i.status === 'CONFIRMED').length}
                     </p>
-                    <p className="text-sm text-gray-600">Inscrições Confirmadas</p>
+                    <p className="text-sm text-gray-600">Inscrições Ativas</p>
                   </div>
                 </div>
               </CardContent>
@@ -279,9 +443,9 @@ export default function MyRegistrationsPage() {
                   <Clock className="h-8 w-8 text-yellow-600" />
                   <div>
                     <p className="text-2xl font-bold text-gray-900">
-                      {inscriptions.filter(i => i.status === 'WAITING').length}
+                      {inscriptions.filter(i => i.status === 'PENDING').length}
                     </p>
-                    <p className="text-sm text-gray-600">Lista de Espera</p>
+                    <p className="text-sm text-gray-600">Pagamento Pendente</p>
                   </div>
                 </div>
               </CardContent>
